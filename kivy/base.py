@@ -170,6 +170,7 @@ class EventLoopBase(EventDispatcher):
         self.quit = True
         self.stop()
         self.status = 'closed'
+        self.window = None
 
     def stop(self):
         '''Stop all input providers and call callbacks registered using
