@@ -82,6 +82,16 @@ KIVY_NO_ARGS
 
     .. versionadded:: 1.9.0
 
+KIVY_SLAVE_MODE
+    If set, Kivy will not run its main loop, nor create the default Window
+    on using ``kivy.core.window`` import.
+
+    Check :class:`~kivy.core.window.WindowBase` documentation for `slave` mode
+    related methods and :mod:`~kivy.core.flow` to manually call parts of the
+    Kivy main loop yourself.
+
+    .. versionadded:: 1.11.0
+
 Restrict core to specific implementation
 ----------------------------------------
 

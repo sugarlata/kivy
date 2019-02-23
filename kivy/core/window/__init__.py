@@ -11,7 +11,7 @@ per application: please don't try to create more than one.
 __all__ = ('Keyboard', 'WindowBase', 'Window')
 
 from os.path import join, exists
-from os import getcwd
+from os import getcwd, environ
 
 from kivy.core import core_select_lib
 from kivy.clock import Clock
@@ -2016,15 +2016,19 @@ class WindowBase(EventDispatcher):
         pass
 
 
+def get_core_window():
+    window_impl = []
+    if platform == 'linux':
+        window_impl += [('egl_rpi', 'window_egl_rpi', 'WindowEglRpi')]
+    if USE_SDL2:
+        window_impl += [('sdl2', 'window_sdl2', 'WindowSDL')]
+    else:
+        window_impl += [
+            ('pygame', 'window_pygame', 'WindowPygame')]
+    if platform == 'linux':
+        window_impl += [('x11', 'window_x11', 'WindowX11')]
+    return core_select_lib('window', window_impl, True)
+
 #: Instance of a :class:`WindowBase` implementation
-window_impl = []
-if platform == 'linux':
-    window_impl += [('egl_rpi', 'window_egl_rpi', 'WindowEglRpi')]
-if USE_SDL2:
-    window_impl += [('sdl2', 'window_sdl2', 'WindowSDL')]
-else:
-    window_impl += [
-        ('pygame', 'window_pygame', 'WindowPygame')]
-if platform == 'linux':
-    window_impl += [('x11', 'window_x11', 'WindowX11')]
-Window = core_select_lib('window', window_impl, True)
+if not environ.get('KIVY_SLAVE_MODE'):
+    Window = get_core_window()
