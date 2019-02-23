@@ -20,6 +20,7 @@ __all__ = (
 )
 
 import sys
+from os import environ
 from kivy.config import Config
 from kivy.logger import Logger
 from kivy.utils import platform
@@ -438,6 +439,7 @@ def runTouchApp(widget=None, slave=False):
 
     '''
 
+    slave = bool(environ.get('KIVY_SLAVE_MODE', False)) or slave
     from kivy.input import MotionEventFactory, kivy_postproc_modules
 
     # Ok, we got one widget, and we are not in slave mode
