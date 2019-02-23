@@ -472,6 +472,209 @@ class WindowSDL(WindowBase):
             dropfile = args
             self.dispatch('on_dropfile', dropfile[0])
 
+    def slave_poll(self):
+        event = self._win.poll()
+        if event is False:
+            return FlowBreak()
+
+        if event is None:
+            return FlowContinue()
+
+        action, args = event[0], event[1:]
+        if action == 'quit':
+            if self.dispatch('on_request_close'):
+                return FlowContinue()
+
+            EventLoop.quit = True
+            return FlowBreak()
+
+        elif action in ('fingermotion', 'fingerdown', 'fingerup'):
+            # for finger, pass the raw event to SDL motion event provider
+            # XXX this is problematic. On OSX, it generates touches with 0,
+            # 0 coordinates, at the same times as mouse. But it works.
+            # We have a conflict of using either the mouse or the finger.
+            # Right now, we have no mechanism that we could use to know
+            # which is the preferred one for the application.
+            if platform in ('ios', 'android'):
+                SDL2MotionEventProvider.q.appendleft(event)
+
+        elif action == 'mousemotion':
+            x, y = args
+            x, y = self._fix_mouse_pos(x, y)
+            self._mouse_x = x
+            self._mouse_y = y
+            # don't dispatch motion if no button are pressed
+            if len(self._mouse_buttons_down) == 0:
+                return FlowContinue()
+
+            self._mouse_meta = self.modifiers
+            self.dispatch('on_mouse_move', x, y, self.modifiers)
+
+        elif action in ('mousebuttondown', 'mousebuttonup'):
+            x, y, button = args
+            x, y = self._fix_mouse_pos(x, y)
+            btn = 'left'
+            if button == 3:
+                btn = 'right'
+            elif button == 2:
+                btn = 'middle'
+            eventname = 'on_mouse_down'
+            self._mouse_buttons_down.add(button)
+            if action == 'mousebuttonup':
+                eventname = 'on_mouse_up'
+                self._mouse_buttons_down.remove(button)
+            self._mouse_x = x
+            self._mouse_y = y
+            self.dispatch(eventname, x, y, btn, self.modifiers)
+
+        elif action.startswith('mousewheel'):
+            self._update_modifiers()
+            x, y, button = args
+            btn = 'scrolldown'
+            if action.endswith('up'):
+                btn = 'scrollup'
+            elif action.endswith('right'):
+                btn = 'scrollright'
+            elif action.endswith('left'):
+                btn = 'scrollleft'
+
+            self._mouse_meta = self.modifiers
+            self._mouse_btn = btn
+            # times = x if y == 0 else y
+            # times = min(abs(times), 100)
+            # for k in range(times):
+            self._mouse_down = True
+            self.dispatch('on_mouse_down',
+                self._mouse_x, self._mouse_y, btn, self.modifiers)
+            self._mouse_down = False
+            self.dispatch('on_mouse_up',
+                self._mouse_x, self._mouse_y, btn, self.modifiers)
+
+        elif action == 'dropfile':
+            dropfile = args
+            self.dispatch('on_dropfile', dropfile[0])
+        # video resize
+        elif action == 'windowresized':
+            self._size = self._win.window_size
+            # don't use trigger here, we want to delay the resize event
+            ev = self._do_resize_ev
+            if ev is None:
+                ev = Clock.schedule_once(self._do_resize, .1)
+                self._do_resize_ev = ev
+            else:
+                ev()
+
+        elif action == 'windowrestored':
+            self.dispatch('on_restore')
+            self.canvas.ask_update()
+
+        elif action == 'windowexposed':
+            self.canvas.ask_update()
+
+        elif action == 'windowminimized':
+            self.dispatch('on_minimize')
+            if Config.getboolean('kivy', 'pause_on_minimize'):
+                self.do_pause()
+
+        elif action == 'windowmaximized':
+            self.dispatch('on_maximize')
+
+        elif action == 'windowhidden':
+            self.dispatch('on_hide')
+
+        elif action == 'windowshown':
+            self.dispatch('on_show')
+
+        elif action == 'windowfocusgained':
+            self._focus = True
+
+        elif action == 'windowfocuslost':
+            self._focus = False
+
+        elif action == 'windowenter':
+            self.dispatch('on_cursor_enter')
+
+        elif action == 'windowleave':
+            self.dispatch('on_cursor_leave')
+
+        elif action == 'joyaxismotion':
+            stickid, axisid, value = args
+            self.dispatch('on_joy_axis', stickid, axisid, value)
+        elif action == 'joyhatmotion':
+            stickid, hatid, value = args
+            self.dispatch('on_joy_hat', stickid, hatid, value)
+        elif action == 'joyballmotion':
+            stickid, ballid, xrel, yrel = args
+            self.dispatch('on_joy_ball', stickid, ballid, xrel, yrel)
+        elif action == 'joybuttondown':
+            stickid, buttonid = args
+            self.dispatch('on_joy_button_down', stickid, buttonid)
+        elif action == 'joybuttonup':
+            stickid, buttonid = args
+            self.dispatch('on_joy_button_up', stickid, buttonid)
+
+        elif action in ('keydown', 'keyup'):
+            mod, key, scancode, kstr = args
+
+            # todo: document why this is ok
+            try:
+                key = self.key_map[key]
+            except KeyError:
+                pass
+
+            if action == 'keydown':
+                self._update_modifiers(mod, key)
+            else:
+                # ignore the key, it has been released
+                self._update_modifiers(mod)
+
+            # if mod in self._meta_keys:
+            if (key not in self._modifiers and
+                    key not in self.command_keys.keys()):
+                try:
+                    kstr_chr = unichr(key)
+                    try:
+                        # On android, there is no 'encoding' attribute.
+                        # On other platforms, if stdout is redirected,
+                        # 'encoding' may be None
+                        encoding = getattr(sys.stdout, 'encoding',
+                                           'utf8') or 'utf8'
+                        kstr_chr.encode(encoding)
+                        kstr = kstr_chr
+                    except UnicodeError:
+                        pass
+                except ValueError:
+                    # todo: document why this is ok
+                    pass
+            # if 'shift' in self._modifiers and key\
+            #        not in self.command_keys.keys():
+            #    return
+
+            if action == 'keyup':
+                self.dispatch('on_key_up', key, scancode)
+                return FlowContinue()
+
+            # don't dispatch more key if down event is accepted
+            if self.dispatch('on_key_down', key,
+                             scancode, kstr,
+                             self.modifiers):
+                return FlowContinue()
+            self.dispatch('on_keyboard', key,
+                          scancode, kstr,
+                          self.modifiers)
+
+        elif action == 'textinput':
+            text = args[0]
+            self.dispatch('on_textinput', text)
+
+        elif action == 'textedit':
+            text = args[0]
+            self.dispatch('on_textedit', text)
+
+        # unhandled event !
+        else:
+            Logger.trace('WindowSDL: Unhandled event %s' % str(event))
+
     def _mainloop(self):
         EventLoop.idle()
 
@@ -491,202 +694,14 @@ class WindowSDL(WindowBase):
                 continue
 
         while True:
-            event = self._win.poll()
-            if event is False:
+            flow = self.slave_poll()
+            flow_type = type(flow)
+            if flow_type is FlowReturn:
+                return flow.return_value
+            elif flow_type is FlowBreak:
                 break
-            if event is None:
+            elif flow_type is FlowContinue:
                 continue
-
-            action, args = event[0], event[1:]
-            if action == 'quit':
-                if self.dispatch('on_request_close'):
-                    continue
-                EventLoop.quit = True
-                break
-
-            elif action in ('fingermotion', 'fingerdown', 'fingerup'):
-                # for finger, pass the raw event to SDL motion event provider
-                # XXX this is problematic. On OSX, it generates touches with 0,
-                # 0 coordinates, at the same times as mouse. But it works.
-                # We have a conflict of using either the mouse or the finger.
-                # Right now, we have no mechanism that we could use to know
-                # which is the preferred one for the application.
-                if platform in ('ios', 'android'):
-                    SDL2MotionEventProvider.q.appendleft(event)
-                pass
-
-            elif action == 'mousemotion':
-                x, y = args
-                x, y = self._fix_mouse_pos(x, y)
-                self._mouse_x = x
-                self._mouse_y = y
-                # don't dispatch motion if no button are pressed
-                if len(self._mouse_buttons_down) == 0:
-                    continue
-                self._mouse_meta = self.modifiers
-                self.dispatch('on_mouse_move', x, y, self.modifiers)
-
-            elif action in ('mousebuttondown', 'mousebuttonup'):
-                x, y, button = args
-                x, y = self._fix_mouse_pos(x, y)
-                btn = 'left'
-                if button == 3:
-                    btn = 'right'
-                elif button == 2:
-                    btn = 'middle'
-                eventname = 'on_mouse_down'
-                self._mouse_buttons_down.add(button)
-                if action == 'mousebuttonup':
-                    eventname = 'on_mouse_up'
-                    self._mouse_buttons_down.remove(button)
-                self._mouse_x = x
-                self._mouse_y = y
-                self.dispatch(eventname, x, y, btn, self.modifiers)
-            elif action.startswith('mousewheel'):
-                self._update_modifiers()
-                x, y, button = args
-                btn = 'scrolldown'
-                if action.endswith('up'):
-                    btn = 'scrollup'
-                elif action.endswith('right'):
-                    btn = 'scrollright'
-                elif action.endswith('left'):
-                    btn = 'scrollleft'
-
-                self._mouse_meta = self.modifiers
-                self._mouse_btn = btn
-                # times = x if y == 0 else y
-                # times = min(abs(times), 100)
-                # for k in range(times):
-                self._mouse_down = True
-                self.dispatch('on_mouse_down',
-                    self._mouse_x, self._mouse_y, btn, self.modifiers)
-                self._mouse_down = False
-                self.dispatch('on_mouse_up',
-                    self._mouse_x, self._mouse_y, btn, self.modifiers)
-
-            elif action == 'dropfile':
-                dropfile = args
-                self.dispatch('on_dropfile', dropfile[0])
-            # video resize
-            elif action == 'windowresized':
-                self._size = self._win.window_size
-                # don't use trigger here, we want to delay the resize event
-                ev = self._do_resize_ev
-                if ev is None:
-                    ev = Clock.schedule_once(self._do_resize, .1)
-                    self._do_resize_ev = ev
-                else:
-                    ev()
-
-            elif action == 'windowrestored':
-                self.dispatch('on_restore')
-                self.canvas.ask_update()
-
-            elif action == 'windowexposed':
-                self.canvas.ask_update()
-
-            elif action == 'windowminimized':
-                self.dispatch('on_minimize')
-                if Config.getboolean('kivy', 'pause_on_minimize'):
-                    self.do_pause()
-
-            elif action == 'windowmaximized':
-                self.dispatch('on_maximize')
-
-            elif action == 'windowhidden':
-                self.dispatch('on_hide')
-
-            elif action == 'windowshown':
-                self.dispatch('on_show')
-
-            elif action == 'windowfocusgained':
-                self._focus = True
-
-            elif action == 'windowfocuslost':
-                self._focus = False
-
-            elif action == 'windowenter':
-                self.dispatch('on_cursor_enter')
-
-            elif action == 'windowleave':
-                self.dispatch('on_cursor_leave')
-
-            elif action == 'joyaxismotion':
-                stickid, axisid, value = args
-                self.dispatch('on_joy_axis', stickid, axisid, value)
-            elif action == 'joyhatmotion':
-                stickid, hatid, value = args
-                self.dispatch('on_joy_hat', stickid, hatid, value)
-            elif action == 'joyballmotion':
-                stickid, ballid, xrel, yrel = args
-                self.dispatch('on_joy_ball', stickid, ballid, xrel, yrel)
-            elif action == 'joybuttondown':
-                stickid, buttonid = args
-                self.dispatch('on_joy_button_down', stickid, buttonid)
-            elif action == 'joybuttonup':
-                stickid, buttonid = args
-                self.dispatch('on_joy_button_up', stickid, buttonid)
-
-            elif action in ('keydown', 'keyup'):
-                mod, key, scancode, kstr = args
-
-                try:
-                    key = self.key_map[key]
-                except KeyError:
-                    pass
-
-                if action == 'keydown':
-                    self._update_modifiers(mod, key)
-                else:
-                    # ignore the key, it has been released
-                    self._update_modifiers(mod)
-
-                # if mod in self._meta_keys:
-                if (key not in self._modifiers and
-                        key not in self.command_keys.keys()):
-                    try:
-                        kstr_chr = unichr(key)
-                        try:
-                            # On android, there is no 'encoding' attribute.
-                            # On other platforms, if stdout is redirected,
-                            # 'encoding' may be None
-                            encoding = getattr(sys.stdout, 'encoding',
-                                               'utf8') or 'utf8'
-                            kstr_chr.encode(encoding)
-                            kstr = kstr_chr
-                        except UnicodeError:
-                            pass
-                    except ValueError:
-                        pass
-                # if 'shift' in self._modifiers and key\
-                #        not in self.command_keys.keys():
-                #    return
-
-                if action == 'keyup':
-                    self.dispatch('on_key_up', key, scancode)
-                    continue
-
-                # don't dispatch more key if down event is accepted
-                if self.dispatch('on_key_down', key,
-                                 scancode, kstr,
-                                 self.modifiers):
-                    continue
-                self.dispatch('on_keyboard', key,
-                              scancode, kstr,
-                              self.modifiers)
-
-            elif action == 'textinput':
-                text = args[0]
-                self.dispatch('on_textinput', text)
-
-            elif action == 'textedit':
-                text = args[0]
-                self.dispatch('on_textedit', text)
-
-            # unhandled event !
-            else:
-                Logger.trace('WindowSDL: Unhandled event %s' % str(event))
 
     def _do_resize(self, dt):
         Logger.debug('Window: Resize window to %s' % str(self.size))

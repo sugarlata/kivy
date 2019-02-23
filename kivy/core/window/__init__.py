@@ -2008,6 +2008,13 @@ class WindowBase(EventDispatcher):
         '''
         pass
 
+    def slave_poll(self):
+        '''Call the part of Kivy main loop that polls the window for events.
+
+        .. versionadded:: 1.11.0
+        '''
+        pass
+
 
 #: Instance of a :class:`WindowBase` implementation
 window_impl = []
