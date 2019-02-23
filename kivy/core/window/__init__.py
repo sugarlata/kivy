@@ -2000,6 +2000,14 @@ class WindowBase(EventDispatcher):
         '''
         pass
 
+    def slave_pause(self):
+        '''Call the part of Kivy main loop that gets executed while
+        the application is paused.
+
+        .. versionadded:: 1.11.0
+        '''
+        pass
+
 
 #: Instance of a :class:`WindowBase` implementation
 window_impl = []

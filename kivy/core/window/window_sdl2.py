@@ -22,6 +22,7 @@ from kivy.logger import Logger
 from kivy.base import EventLoop, ExceptionManager, stopTouchApp
 from kivy.clock import Clock
 from kivy.config import Config
+from kivy.core.flow import FlowReturn, FlowBreak, FlowContinue
 from kivy.core.window import WindowBase
 from kivy.core.window._window_sdl2 import _WindowSDL2Storage
 from kivy.input.provider import MotionEventProvider
@@ -455,6 +456,22 @@ class WindowSDL(WindowBase):
                           (self.system_size[1] - y) * self._density)
         return x, y
 
+    def slave_pause(self):
+        self._win.wait_event()
+        if not self._pause_loop:
+            return FlowBreak()
+
+        event = self._win.poll()
+        if event is None:
+            return FlowContinue()
+
+        # As dropfile is send was the app is still in pause.loop
+        # we need to dispatch it
+        action, args = event[0], event[1:]
+        if action == 'dropfile':
+            dropfile = args
+            self.dispatch('on_dropfile', dropfile[0])
+
     def _mainloop(self):
         EventLoop.idle()
 
@@ -464,18 +481,14 @@ class WindowSDL(WindowBase):
         # Nothing happen during the pause on iOS, except gyroscope value sent
         # over joystick. So it's safe.
         while self._pause_loop:
-            self._win.wait_event()
-            if not self._pause_loop:
+            flow = self.slave_pause()
+            flow_type = type(flow)
+            if flow_type is FlowReturn:
+                return flow.return_value
+            elif flow_type is FlowBreak:
                 break
-            event = self._win.poll()
-            if event is None:
+            elif flow_type is FlowContinue:
                 continue
-            # As dropfile is send was the app is still in pause.loop
-            # we need to dispatch it
-            action, args = event[0], event[1:]
-            if action == 'dropfile':
-                dropfile = args
-                self.dispatch('on_dropfile', dropfile[0])
 
         while True:
             event = self._win.poll()
